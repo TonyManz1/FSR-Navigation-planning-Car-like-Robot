@@ -1,10 +1,9 @@
 function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_curve)
-
+    
 % DES_TRAJECTORY Generate desired trajectory from path points
     %
     % Input:
     %   collected_points - Array of points along the path [x, y]
-    %   radius_curve - Minimum turning radius for the vehicle [m]
     %
     % Outputs:
     %   xd - Timeseries of x coordinates
@@ -13,8 +12,7 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
     %   phid - Timeseries of steering angles
     %   q0 - Initial state [x0, y0, theta0, phi0]
 
-    % Path for saving figures
-    %save_path = 'D:\Automazione e Robotica\FSR\FSR_Navigation_planning_Car-like_Robot\Images\Control_simulations\A_star\Matlab\';  
+    % save_path = 'D:\Automazione e Robotica\FSR\FSR_Navigation_planning_Car-like_Robot\Images\Control_simulations\A_star\Matlab\';  
 
     % Parameters
     l = 0.85;                       % Wheelbase length [m]
@@ -24,65 +22,50 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
     eps = 1e-6;                     % Small value to prevent division by zero
 
     % Extract x and y coordinates from collected_points directly
-    x_orig = collected_points(:, 1);
-    y_orig = collected_points(:, 2);
-    
-    % Simply use the original points directly
-    x = x_orig;
-    y = y_orig;
-    
-    % Create a uniform parameterization along path length
-    cum_length = zeros(length(x), 1);
-    for i = 2:length(x)
-        cum_length(i) = cum_length(i-1) + norm([x(i) - x(i-1), y(i) - y(i-1)]);
-    end
-    
-    % Normalized parameter along trajectory
-    if cum_length(end) > 0
-        s_orig = cum_length / cum_length(end);
-    else
-        s_orig = linspace(0, 1, length(x))';
-    end
-    
-    % Generate time vector with uniform spacing
-    T = linspace(0, tf, 10000)';
-    s_t = linspace(0, 1, length(T))';
-    
-    % Create a simple piecewise cubic interpolation that ensures C1 continuity
-    % while exactly passing through all waypoints
-    pp_x = pchip(s_orig, x);
-    pp_y = pchip(s_orig, y);
-    
-    % Evaluate the interpolated trajectory
-    x_t = ppval(pp_x, s_t);
-    y_t = ppval(pp_y, s_t);
-    
-    % Calculate derivatives using the same method as the original code
-    dt = mean(diff(T));
-    
-    % Apply original smoothing to derivatives
-    x_dot = smooth(gradient(x_t, dt), 20);
-    y_dot = smooth(gradient(y_t, dt), 20);
-    x_ddot = smooth(gradient(x_dot, dt), 30);
-    y_ddot = smooth(gradient(y_dot, dt), 30);
-    x_dddot = smooth(gradient(x_ddot, dt), 40);
-    y_dddot = smooth(gradient(y_ddot, dt), 40);
+    x = collected_points(:, 1);
+    y = collected_points(:, 2);
 
-    % Compute theta and linear velocity as in the original code
+    % Define time vector
+    t = linspace(0, tf, length(x));         % Normalize time from 0 to tf
+
+    % Fit a 5-th order polynomial to the arc length s as a function of t
+    s_sample = linspace(0, 1, length(t));   % Sample s values
+    [p,~,mu] = polyfit(t, s_sample, 5);     % Fit polynomial with mu for centring and scaling
+
+    % Generate a finer time grid for interpolation
+    T = linspace(0, tf, 10000);            
+
+    % Compute interpolated s values using the 5-th order polynomial
+    s_t = polyval(p, T, [], mu);
+
+    % Interpolate x and y values using spline interpolation based on s_t with smoothing
+    x_t = smooth(interp1(s_sample, x, s_t, 'spline'), 100);
+    y_t = smooth(interp1(s_sample, y, s_t, 'spline'), 100);
+
+    % Compute derivatives using gradient with smoothing
+    dt = mean(diff(T));
+    x_dot = smooth(gradient(x_t, dt), 50);
+    y_dot = smooth(gradient(y_t, dt), 50);
+    x_ddot = smooth(gradient(x_dot, dt), 50);
+    y_ddot = smooth(gradient(y_dot, dt), 50);
+    x_dddot = smooth(gradient(x_ddot, dt), 50);
+    y_dddot = smooth(gradient(y_ddot, dt), 50);
+
+    % Compute theta and linear velocity
     theta = atan2(y_dot, x_dot);
     v = sqrt(x_dot.^2 + y_dot.^2);
     
     % Ensure minimum velocity to prevent divisions by very small numbers
     v = max(v, eps);
     
-    % Compute curvature and steering angle using original formula
+    % Compute curvature and steering angle
     curvature = (y_ddot .* x_dot - x_ddot .* y_dot) ./ (v.^3 + eps);
     phi = atan(l * curvature);
     
     % Limit steering angle
     phi = min(max(phi, -pi/4), pi/4);
     
-    % Compute angular velocity with original safeguards
+    % Compute angular velocity with safeguards
     omega = zeros(size(T));
     for i = 1:length(T)
         if v(i) > eps
@@ -99,8 +82,8 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
         end
     end
     
-    % Apply additional smoothing to omega as in original code
-    omega = smooth(omega, 100);
+    % Apply additional smoothing to omega
+    omega = smooth(omega, 200);
     
     % Final limiting of velocities
     v = min(max(v, -v_max), v_max);
@@ -144,9 +127,9 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
     yl = ylim;
     axis equal; 
     grid on;
-    
-    % filename = [save_path, 'trajectory_astar.pdf'];
-    % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
+
+     % filename = [save_path, 'trajectory_astar.pdf'];
+     % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
     
     % Figure 2: Heading and Angular Velocity
     figure('Name', 'Velocities', 'Position', [100, 100, 800, 600]);
@@ -180,8 +163,8 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
     ylim([omega_min omega_max_plot]);
     grid on;
 
-    % filename = [save_path, 'velocities_astar.pdf'];
-    % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
+     % filename = [save_path, 'velocities_astar.pdf'];
+     % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
 
     % Figure 3: Evolution of states
     figure('Name', 'State Evolution', 'Position', [100, 100, 800, 800]);
@@ -214,6 +197,6 @@ function [xd, yd, thetad, phid, q0] = des_trajectory(collected_points, radius_cu
     xlim([0 tf]);
     grid on;
 
-    % filename = [save_path, 'state_evolution_astar.pdf'];
-    % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
+     % filename = [save_path, 'state_evolution_astar.pdf'];
+     % exportgraphics(gcf, filename, 'Resolution', 300, 'ContentType', 'image');
 end

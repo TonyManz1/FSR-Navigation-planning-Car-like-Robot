@@ -10,18 +10,11 @@ function [path_points, sample_points, tree_data, path_node_count] = astar_planni
 %            - length_step: Length of the step forward
 %            - radius_curve: Bending radius for curves
 %            - heuristic_type: Type of heuristic (1=Euclidean, 2=Manhattan)
-%            - visualize: Flag for visualization of diagnostics when goal unreachable (optional, default=false)
 %
 % Outputs:
 %   path_points - Array of points along the smoothed path
 %   sample_points - Array of all sample points generated
 %   tree_data - Structure with tree information (points, connections, etc.)
-%   path_node_count - Number of nodes in the final path
-
-% Set default for visualization if not provided
-if ~isfield(params, 'visualize')
-    params.visualize = false;
-end
 
 % Initialize tree data structure
 tree_data = struct();
@@ -58,15 +51,11 @@ while ~isempty(queue)
    
    % Check if we're close enough to goal
    if norm(current_point - goal) < params.length_step
-      
-       % Verify there's no obstacle between current point and goal
-       if ~is_collision_forward(current_point, goal, map)
-           tree_data.sample_points = [tree_data.sample_points; goal];
-           tree_data.connections = [tree_data.connections; current_point, goal];
-           tree_data.goal_reached = true;
-           
-           break;
-       end
+       % We've reached close enough to the goal
+       tree_data.sample_points = [tree_data.sample_points; goal];
+       tree_data.connections = [tree_data.connections; current_point, goal];
+       tree_data.goal_reached = true;
+       break;
    end
 
    % Calculate new points and add them to the queue if not visited
@@ -76,8 +65,19 @@ end
 
 % After exploration, check if any point is within range of the goal if goal not already reached
 if ~tree_data.goal_reached
-    % Connect the goal to accessible points with obstacle checking
-    tree_data = connect_to_goal(tree_data, map, goal, params);
+    close_points = find_close_points(tree_data.sample_points, goal, params.length_step);
+
+    % Connect the goal to accessible points
+    if ~isempty(close_points)
+        for i = 1:size(close_points, 1)
+            idx = close_points(i, 1);
+            tree_data.sample_points = [tree_data.sample_points; goal];
+            tree_data.connections = [tree_data.connections; tree_data.sample_points(idx,:), goal];
+        end
+        tree_data.goal_reached = true;
+    else
+        disp('Goal not reachable with current parameters.');
+    end
 end
 
 % Add start point to sample points
@@ -96,68 +96,6 @@ else
     path_node_count = 0;
     disp('No path found to goal');
 end
-end
-
-function tree_data = connect_to_goal(tree_data, map, goal, params)
-    % Connect close points to goal with obstacle checking
-    
-    close_points = find_close_points(tree_data.sample_points, goal, params.length_step);
-    valid_connections = 0;
-
-    % Connect the goal to accessible points
-    if ~isempty(close_points)
-        % Sort points by distance to goal
-        [~, order] = sort(close_points(:,2));
-        close_points = close_points(order,:);
-        
-        % Add goal to sample points only once
-        original_sample_size = size(tree_data.sample_points, 1);
-        tree_data.sample_points = [tree_data.sample_points; goal];
-        goal_idx = size(tree_data.sample_points, 1);
-        
-        for i = 1:size(close_points, 1)
-            idx = close_points(i, 1);
-            current_point = tree_data.sample_points(idx,:);
-            
-            % Verify there's no obstacle between current point and goal
-            if ~is_collision_forward(current_point, goal, map)
-                % Valid connection - add it
-                tree_data.connections = [tree_data.connections; current_point, goal];
-                valid_connections = valid_connections + 1;
-               
-            elseif params.visualize
-                % Visualize blocked connections - only if visualize=true for diagnostics
-                plot([current_point(1), goal(1)], [current_point(2), goal(2)], 'r--', 'LineWidth', 0.5);
-            end
-        end
-        
-        if valid_connections > 0
-            tree_data.goal_reached = true;
-           
-        else
-            % No valid connections, remove goal from sample points
-            tree_data.sample_points(goal_idx, :) = [];
-            disp('Goal is nearby but not directly accessible due to obstacles.');
-            
-            % Visualize unreachable goal - only if visualize=true for diagnostics
-            if params.visualize
-                plot(goal(1), goal(2), 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'r');
-                title('Goal unreachable due to obstacles');
-        
-                if ~isempty(findobj('type', 'line', 'LineStyle', '--', 'Color', 'r'))
-                    legend('Exploration tree', 'Blocked connections to goal', 'Location', 'best');
-                end
-            end
-        end
-    else
-        disp('Goal not reachable with current parameters.');
-        
-        % Visualize unreachable goal - only if visualize=true for diagnostics
-        if params.visualize
-            plot(goal(1), goal(2), 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'y');
-            title('No points close enough to goal');
-        end
-    end
 end
 
 function [new_points, tree_data] = calculate_points(current_point, current_angle, current_g_cost, goal, map, tree_data, params)
@@ -256,8 +194,6 @@ function [tree_data] = add_point(current_point, end_point, angle, curve_data, ma
                tree_data.occupancy_matrix(y_points(i), x_points(i)) = 1;
            end
        end
-       
-       % Always visualize the standard exploration tree
        plot([current_point(1), end_point(1)], [current_point(2), end_point(2)], 'k-', 'LineWidth', 0.5, 'HandleVisibility','off');
    else
        % Curve
@@ -268,8 +204,6 @@ function [tree_data] = add_point(current_point, end_point, angle, curve_data, ma
                tree_data.occupancy_matrix(y, x) = 1;
            end
        end
-       
-       % Always visualize the standard exploration tree
        plot(curve_data(:,1), curve_data(:,2), 'k-', 'LineWidth', 0.5, 'HandleVisibility','off');
        
        % Store curve points for later path reconstruction
@@ -278,8 +212,6 @@ function [tree_data] = add_point(current_point, end_point, angle, curve_data, ma
    end
    
    tree_data.connections = [tree_data.connections; current_point, end_point];
-   
-   % Always visualize the standard exploration nodes
    plot(end_point(1), end_point(2), 'b.', 'MarkerSize', 10, 'HandleVisibility','off');
 end
 
@@ -289,10 +221,10 @@ function visited = is_point_visited(point, occupancy_matrix)
 end
 
 function within_bounds = is_within_bounds(point, map)
-   % Check if point is within map bounds
+   % Check if point is within map bounds, with correct x,y order
    within_bounds = point(1) > 0 && point(2) > 0 && ...
-                  point(1) <= size(map, 2) && ... 
-                  point(2) <= size(map, 1);      
+                  point(1) <= size(map, 2) && ... % width = columns = x
+                  point(2) <= size(map, 1);       % height = rows = y
 end
 
 function collision_forward = is_collision_forward(current_point, end_point_forward, map)
@@ -301,7 +233,7 @@ function collision_forward = is_collision_forward(current_point, end_point_forwa
    x_points = round(linspace(current_point(1), end_point_forward(1), 300));
    y_points = round(linspace(current_point(2), end_point_forward(2), 300));
    for i = 2:(length(x_points)-1)
-      
+       % Check map with correct indexing (y, x)
        if x_points(i) > 0 && y_points(i) > 0 && ...
           x_points(i) <= size(map, 2) && y_points(i) <= size(map, 1) && ...
           map(y_points(i), x_points(i)) == 0
@@ -317,7 +249,7 @@ function collision_curve = is_collision_curve(x, y, map)
    for i = 2:(length(x)-1)
        rx = round(x(i));
        ry = round(y(i));
-      
+       % Check map with correct indexing (y, x)
        if rx > 0 && ry > 0 && ...
           rx <= size(map, 2) && ry <= size(map, 1) && ...
           map(ry, rx) == 0
@@ -341,8 +273,8 @@ function adjacency_matrix = create_adjacency_matrix(nodes, connections)
        point_1 = connections(i, 1:2);
        point_2 = connections(i, 3:4);
        
-       idx_1 = find(ismember(nodes, point_1, 'rows'), 1); 
-       idx_2 = find(ismember(nodes, point_2, 'rows'), 1); 
+       idx_1 = find(ismember(nodes, point_1, 'rows'), 1); % Use 1 to get just first match
+       idx_2 = find(ismember(nodes, point_2, 'rows'), 1); % Use 1 to get just first match
        
        if ~isempty(idx_1) && ~isempty(idx_2)
            dist = norm(point_1 - point_2);
@@ -489,6 +421,7 @@ function collected_points = get_path_points(path, nodes, tree_data)
     end
     
     % Apply smoothing with spline
+    % First, get cumulative distance along the path for parameterization
     n_points = size(raw_points, 1);
     cum_dist = zeros(n_points, 1);
     for i = 2:n_points
