@@ -1,20 +1,6 @@
-  function [path, tree_x, tree_y, theta, num_iterations] = rrtStar_smooth(map, start, goal, params)
+function [path, tree_x, tree_y, theta, num_iterations] = rrtStar_clothoid(map, start, goal, params)
 
-% RRTSTAR_SMOOTH Performs path planning using RRT* algorithm with smooth curves
-%
-% Inputs:
-%   map - Binary map of the environment (1 = free space, 0 = obstacle)
-%   start - Start coordinates [x, y]
-%   goal - Goal coordinates [x, y]
-%   params - Structure with algorithm parameters
-%
-% Outputs:
-%   path - Structure containing points along the smoothed path
-%   tree_x - X coordinates of all nodes in the tree
-%   tree_y - Y coordinates of all nodes in the tree
-%   theta - Orientation angles for all nodes in the tree [rad]
-%   num_iterations - Number of iterations performed by the algorithm
-  
+
     tic 
 
     % Initialize tree with start point
@@ -211,61 +197,76 @@ function [x_new, theta_new, path_points] = steer(current_point, current_angle, r
     end
 
     % Parameters for curve generation
-    num_points = 150;  
-    max_curve_angle = pi/2;  
-    min_straight_length = radius_curve * 0.8; 
-
-    % First curve generation
+    num_points = 150;
+    
+    % Calculate angle difference and determine turning direction
     angle_diff = wrapToPi(target_direction - current_angle);
-    turn_angle = min(max_curve_angle, abs(angle_diff));
-    turn_direction = sign(angle_diff);
-
-    % Generate clothoid-like transition 
-    s = linspace(0, turn_angle, num_points);
-    curve1_points = zeros(num_points, 2);
-    for i = 1:num_points
-       
-        local_radius = radius_curve / (1 + abs(s(i))/(pi/3));
-        
-        if total_distance < length_step * 1.5
-            local_radius = local_radius * 0.7;
-        end
-        
-        center = current_point + local_radius * [cos(current_angle + turn_direction*pi/2), ...
-                                               sin(current_angle + turn_direction*pi/2)];
-        theta = current_angle + turn_direction * s(i);
-        curve1_points(i,:) = center + local_radius * [cos(theta - turn_direction*pi/2), ...
-                                                     sin(theta - turn_direction*pi/2)];
+    turn_direction = sign(angle_diff);  % 1 for left turn, -1 for right turn
+    
+    % Clothoid parameters
+    clothoid_length = min(total_distance, length_step * 2); 
+    
+    % Calculate curvature variation rate (a)
+    % For a clothoid, curvature κ = a * s
+    % We want the curvature at the end of the clothoid to be 1/radius_curve
+    % thus a = (1/radius_curve) / clothoid_length
+    max_curvature = 1 / radius_curve;
+    
+    % Adjust curvature for shorter segments
+    if total_distance < length_step * 1.5
+        max_curvature = max_curvature * 1.3; 
     end
-
-    % Smooth transition 
-    path_points = smoothTransition(curve1_points, 2);
-
-    % Generate shorter approach curve
-    final_points = generateSmoothApproach(path_points(end,:), theta, rand_point, radius_curve * 0.6, num_points);
-
-    % Combine points
-    path_points = [path_points; final_points];
-
-    % Final smoothing 
+    
+    curvature_rate = max_curvature / clothoid_length;
+    
+    % Initialize clothoid points
+    path_points = zeros(num_points, 2);
+    path_points(1,:) = current_point;
+    theta = current_angle;
+    
+    % Arc lengths for each point
+    arc_lengths = linspace(0, clothoid_length, num_points);
+    
+    % Numerical integration to calculate clothoid points
+    for i = 2:num_points
+        ds = arc_lengths(i) - arc_lengths(i-1);
+        
+        % Curvature at current point (increases linearly with arc length)
+        curvature = curvature_rate * arc_lengths(i-1);
+        
+        % Angle increment in the turning direction
+        dtheta = curvature * ds * turn_direction;
+        
+        % Update orientation
+        theta = theta + dtheta;
+        
+        % Calculate new coordinates using Euler approximation
+        dx = ds * cos(theta);
+        dy = ds * sin(theta);
+        
+        % Update position
+        path_points(i,1) = path_points(i-1,1) + dx;
+        path_points(i,2) = path_points(i-1,2) + dy;
+    end
+    
+    % If the clothoid endpoint is not close enough to the target, add a final approach curve
+    if norm(path_points(end,:) - rand_point) > length_step * 0.5
+        % Generate shorter approach curve toward the target point
+        final_points = generateSmoothApproach(path_points(end,:), theta, rand_point, radius_curve * 0.6, num_points);
+        
+        % Combine points (skip the first point of final_points to avoid duplication)
+        path_points = [path_points; final_points(2:end,:)];
+    end
+    
+    % Final smoothing to ensure continuity
     path_points = smoothPath(path_points, 2);
-
+    
     % Return final position and orientation
     x_new = path_points(end,:);
     theta_new = atan2(diff(path_points(end-1:end,2)), diff(path_points(end-1:end,1)));
 end
-
-
-function smooth_points = smoothTransition(points, window_size)
-    smooth_points = points;
-    for i = 1:size(points,1)
-        start_idx = max(1, i-window_size);
-        end_idx = min(size(points,1), i+window_size);
-        smooth_points(i,:) = mean(points(start_idx:end_idx,:));
-    end
-end
-
-
+    
+   
 function approach_points = generateSmoothApproach(start_point, start_angle, target_point, radius, num_points)
     dx = target_point(1) - start_point(1);
     dy = target_point(2) - start_point(2);
