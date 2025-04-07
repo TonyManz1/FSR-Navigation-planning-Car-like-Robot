@@ -19,6 +19,10 @@ This repository contains the final technical project of the Field and Service Ro
 * For Dijkstra: Uncomment the Dijkstra section
 * For A*: Uncomment the A* section
 3. Run the simulation
+
+#### Comparisons between A* and Djikstra
+1. In MATLAB, run the file "comparison_Astar_Djikstra.m" inside the folder "Comparisons"
+   
    
    
    
